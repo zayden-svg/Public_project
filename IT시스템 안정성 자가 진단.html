@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>전산/인프라 담당자 핵심 자가진단 Top 10</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        /* 커스텀 라디오 버튼 스타일링 */
+        .radio-label { transition: all 0.2s ease-in-out; }
+        input[type="radio"]:checked + .radio-label.yes-btn { background-color: #fee2e2; border-color: #ef4444; color: #b91c1c; } /* Rose */
+        input[type="radio"]:checked + .radio-label.neutral-btn { background-color: #fef3c7; border-color: #f59e0b; color: #b45309; } /* Amber */
+        input[type="radio"]:checked + .radio-label.no-btn { background-color: #d1fae5; border-color: #10b981; color: #047857; } /* Emerald */
+        
+        /* 차트 컨테이너 필수 제약 규칙 */
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 300px; /* 게이지 차트에 맞춘 너비 제한 */
+            margin-left: auto;
+            margin-right: auto;
+            height: 200px; /* 반원(Half-Doughnut) 형태에 맞춘 높이 */
+            max-height: 250px;
+        }
+    </style>
+    <!-- Chosen Palette: Slate (Neutral), Rose (High Risk/Yes), Amber (Medium Risk), Emerald (Low Risk), Indigo (Brand) -->
+    <!-- Application Structure Plan: 
+         1. Header: Top 10 Title and 0/10 progress bar.
+         2. Left Column: A clean list of 10 critical questions directly from the markdown.
+         3. Right Column: Sticky dashboard showing Projected/Actual Score (out of 30), a Chart.js Gauge chart mapping the score, and the 3-tier recommendation logic (위험, 주의, 양호) based on the latest document. -->
+    <!-- Visualization & Content Choices: 
+         - Questions: Card-based list for easy reading and clicking.
+         - Score Chart: A half-doughnut (Gauge) chart via Chart.js to visualize the score from 10 to 30. NO SVG.
+         - Result Card: Dynamic updates based on the 3 score tiers (>=25, >=18, <=17) from the source markdown. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans antialiased">
+
+    <!-- Header -->
+    <header class="bg-white shadow-sm sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <span class="text-2xl">🖥️</span>
+                <div>
+                    <h1 class="text-xl font-bold text-slate-900 leading-tight">[IT 시스템 안정성 확보]</h1>
+                    <p class="text-sm text-slate-500 font-medium">전산/인프라 담당자 핵심 자가진단 Top 10</p>
+                </div>
+            </div>
+            <div class="text-sm font-medium text-slate-500 bg-slate-100 py-1 px-3 rounded-full">
+                진행률: <span id="progress-text" class="text-indigo-600 font-bold">0</span> / 10
+            </div>
+        </div>
+        <!-- Progress Bar -->
+        <div class="h-1 w-full bg-slate-100">
+            <div id="progress-bar" class="h-1 bg-indigo-600 transition-all duration-300" style="width: 0%;"></div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            
+            <!-- Left Column: Top 10 Questionnaire -->
+            <div class="lg:col-span-2 space-y-5" id="questionnaire-container">
+                <!-- Questions injected via JS -->
+            </div>
+
+            <!-- Right Column: Results Dashboard (Sticky) -->
+            <div class="lg:col-span-1">
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 sticky top-28">
+                    <h2 class="text-lg font-bold text-slate-900 mb-4 border-b pb-2">실시간 진단 결과</h2>
+                    
+                    <!-- Score Display -->
+                    <div class="text-center mb-2">
+                        <div class="text-sm text-slate-500 mb-1">예측 총점 (Max 30)</div>
+                        <div class="text-5xl font-extrabold transition-colors duration-300 text-slate-300" id="total-score-display">-</div>
+                    </div>
+
+                    <!-- Gauge Chart Container -->
+                    <div class="chart-container mb-4">
+                        <canvas id="gaugeChart"></canvas>
+                    </div>
+
+                    <!-- Risk Level Indicator -->
+                    <div id="risk-level-container" class="rounded-lg p-4 mb-5 bg-slate-100 text-center transition-colors duration-300 border border-slate-200">
+                        <div id="risk-level-title" class="text-lg font-bold text-slate-700">진단을 시작해주세요</div>
+                        <div id="risk-level-desc" class="text-xs text-slate-500 mt-2">우측의 10개 문항에 답하시면 예상 점수와 맞춤 솔루션이 표시됩니다.</div>
+                    </div>
+
+                    <!-- NetFUNNEL Recommendation -->
+                    <div class="bg-slate-50 rounded-lg p-4 border border-slate-200">
+                        <h3 class="text-sm font-bold text-slate-800 mb-3 flex items-center">
+                            <span class="mr-2">💡</span> 대응 제언 (NetFUNNEL)
+                        </h3>
+                        <ul id="recommendation-list" class="text-sm text-slate-600 space-y-2 leading-relaxed">
+                            <li>문항을 체크하시면 현재 상태에 맞는 도입 가이드가 제공됩니다.</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <script>
+        // --- 1. Top 10 Data Structure (From Markdown) ---
+        const top10Questions = [
+            { id: "q1", title: "[무한 새로고침 부하]", text: "화면 로딩 지연 시, 사용자의 반복적인 '새로고침(F5)' 요청이 Web/WAS에 그대로 도달하여 서버 부하를 기하급수적으로 증폭시킵니까?" },
+            { id: "q2", title: "[DBCP 고갈]", text: "DB 커넥션 풀(DBCP) 개수가 한정되어 있어, 동시 접속 폭주 시 쿼리 대기로 인해 가장 먼저 시스템 전체 병목(Hang)을 일으킵니까?" },
+            { id: "q3", title: "[스케일링 지연]", text: "클라우드 오토스케일링(Auto-scaling)이나 물리 서버 증설에 걸리는 시간이, 실제 순간 트래픽 폭주 속도를 따라가지 못해 서버가 다운됩니까?" },
+            { id: "q4", title: "[외부 연동 지연 전이]", text: "외부 연동 API(결제, 본인인증 등)의 응답 지연이 우리 시스템 전체의 서버 자원(Thread)을 점유하여 연쇄 장애로 전이된 적이 있습니까?" },
+            { id: "q5", title: "[로그인/인증 병목]", text: "동시 접속이 몰릴 때, 암호화 연산 부하가 큰 '로그인 처리' 구역이 터지면서 서비스 전체 속도를 현저히 저하시킵니까?" },
+            { id: "q6", title: "[악성 민원 유발]", text: "서버 과부하 및 접속 지연 시 친절한 대기 안내 없이 '503 에러'나 '하얀 화면(White screen)'만 노출되어 대국민 악성 민원이 폭주합니까?" },
+            { id: "q7", title: "[공정성 시비]", text: "선착순 서비스(예약, 접수 등)에서 사용자에게 \"누가 먼저 눌렀는지\" 증명할 명확한 데이터(순번)가 없어 공정성 시비나 항의가 발생합니까?" },
+            { id: "q8", title: "[매크로/봇 자원 선점]", text: "0.1초 단위로 자원을 선점하는 매크로나 봇(Bot)의 비정상적 접근을 단순히 IP를 차단하는 것 외에는 원천적으로 방어할 수단이 없습니까?" },
+            { id: "q9", title: "[장애 면책 근거 부족]", text: "행안부 '대량 접속 통제' 가이드라인을 미준수하고 있으며, 실제 장애 발생 시 시스템을 보호하기 위한 적극적 조치(면책 근거)가 부족합니까?" },
+            { id: "q10", title: "[예산 낭비]", text: "1년에 며칠뿐인 스파이크 트래픽(피크타임)을 감당하기 위해 평소에 불필요하게 많은 서버(과도한 스펙)를 유지하며 인프라 예산을 낭비하고 있습니까?" }
+        ];
+
+        // --- 2. State Management ---
+        const state = {
+            answers: {}, 
+            totalScore: 0,
+            answeredCount: 0
+        };
+
+        // --- 3. Initialization & Rendering ---
+        const container = document.getElementById('questionnaire-container');
+
+        function renderChecklist() {
+            let html = '';
+            top10Questions.forEach((q, index) => {
+                html += `
+                    <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 hover:border-indigo-300 hover:shadow-md transition-all">
+                        <div class="flex items-start mb-4">
+                            <div class="bg-indigo-100 text-indigo-800 font-bold rounded px-2 py-1 text-sm mr-3 mt-0.5">${index + 1}</div>
+                            <div>
+                                <h3 class="font-bold text-slate-800 mb-1">${q.title}</h3>
+                                <p class="text-slate-600 text-sm leading-relaxed">${q.text}</p>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-3 gap-3 ml-10">
+                            <label class="cursor-pointer relative">
+                                <input type="radio" name="${q.id}" value="3" class="peer sr-only" onchange="handleAnswer('${q.id}', 3)">
+                                <div class="radio-label yes-btn text-center py-2 px-2 rounded-lg border border-slate-200 text-slate-500 font-medium text-sm hover:bg-slate-50">
+                                    예 (위험)
+                                </div>
+                            </label>
+                            <label class="cursor-pointer relative">
+                                <input type="radio" name="${q.id}" value="2" class="peer sr-only" onchange="handleAnswer('${q.id}', 2)">
+                                <div class="radio-label neutral-btn text-center py-2 px-2 rounded-lg border border-slate-200 text-slate-500 font-medium text-sm hover:bg-slate-50">
+                                    보통이다
+                                </div>
+                            </label>
+                            <label class="cursor-pointer relative">
+                                <input type="radio" name="${q.id}" value="1" class="peer sr-only" onchange="handleAnswer('${q.id}', 1)">
+                                <div class="radio-label no-btn text-center py-2 px-2 rounded-lg border border-slate-200 text-slate-500 font-medium text-sm hover:bg-slate-50">
+                                    아니오 (안전)
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        // --- 4. Logic & Event Handling ---
+        window.handleAnswer = function(questionId, value) {
+            if (!state.answers[questionId]) {
+                state.answeredCount++;
+                updateProgress();
+            }
+            state.answers[questionId] = value;
+            calculateScore();
+            updateDashboard();
+        };
+
+        function updateProgress() {
+            document.getElementById('progress-text').innerText = state.answeredCount;
+            document.getElementById('progress-bar').style.width = `${(state.answeredCount / 10) * 100}%`;
+        }
+
+        function calculateScore() {
+            state.totalScore = 0;
+            for (const key in state.answers) {
+                state.totalScore += state.answers[key];
+            }
+        }
+
+        // --- 5. Chart.js Setup (Gauge Chart) ---
+        let gaugeChart;
+        function initChart() {
+            const ctx = document.getElementById('gaugeChart').getContext('2d');
+            gaugeChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['현재 점수', '잔여 점수'],
+                    datasets: [{
+                        data: [0, 30], // Initial state (Min score logic applied later)
+                        backgroundColor: ['#e2e8f0', '#f8fafc'],
+                        borderWidth: 0,
+                        circumference: 180,
+                        rotation: 270,
+                    }]
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    cutout: '75%',
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { enabled: false }
+                    },
+                    animation: { animateScale: true, animateRotate: true }
+                }
+            });
+        }
+
+        // --- 6. Dashboard Updates ---
+        function updateDashboard() {
+            if (state.answeredCount === 0) return;
+
+            // 예상 총점 계산 (현재 평균 점수 * 10개 문항)
+            const projectedScore = Math.round((state.totalScore / state.answeredCount) * 10);
+            
+            // Update Score Text
+            const scoreDisplay = document.getElementById('total-score-display');
+            scoreDisplay.innerText = projectedScore;
+
+            // Determine Risk Level (Based on Markdown constraints: >=25, 18~24, <=17)
+            const riskContainer = document.getElementById('risk-level-container');
+            const riskTitle = document.getElementById('risk-level-title');
+            const riskDesc = document.getElementById('risk-level-desc');
+            const list = document.getElementById('recommendation-list');
+            
+            scoreDisplay.className = "text-5xl font-extrabold transition-colors duration-300"; // reset
+            let gaugeColor = '#e2e8f0';
+
+            if (projectedScore >= 25) {
+                // 25점 이상 [위험]
+                riskContainer.className = "rounded-lg p-4 mb-5 bg-rose-50 border border-rose-200 text-center transition-colors duration-300";
+                riskTitle.className = "text-lg font-bold text-rose-700";
+                riskTitle.innerText = "🚨 위험 (Risk)";
+                riskDesc.innerText = "물리적 자원 및 로드밸런서의 한계를 초과했습니다. 즉각적인 서비스 마비 방지 대책이 시급합니다.";
+                scoreDisplay.classList.add("text-rose-600");
+                gaugeColor = '#e11d48'; // Rose 600
+
+                list.innerHTML = `
+                    <li class="flex items-start mb-2"><span class="mr-2 text-rose-600">▪</span><span><strong class="text-rose-700">전사 도입 시급:</strong> NetFUNNEL(가상 대기실 및 유량 제어)을 즉시 도입하여 유입되는 모든 트래픽을 서버 가용량 내로 통제해야 합니다.</span></li>
+                    <li class="flex items-start"><span class="mr-2 text-rose-600">▪</span><span><strong class="text-rose-700">시스템 다운 방지:</strong> 무한 새로고침 및 봇 트래픽을 앞단에서 차단하여 DB 커넥션 풀 고갈을 원천 봉쇄하십시오.</span></li>
+                `;
+            } else if (projectedScore >= 18) {
+                // 18점 ~ 24점 [주의]
+                riskContainer.className = "rounded-lg p-4 mb-5 bg-amber-50 border border-amber-200 text-center transition-colors duration-300";
+                riskTitle.className = "text-lg font-bold text-amber-700";
+                riskTitle.innerText = "⚠️ 주의 (Warning)";
+                riskDesc.innerText = "평소엔 양호하나 특정 이벤트 시 민원 폭주와 시스템 병목 현상이 발생할 확률이 높습니다.";
+                scoreDisplay.classList.add("text-amber-600");
+                gaugeColor = '#d97706'; // Amber 600
+
+                list.innerHTML = `
+                    <li class="flex items-start mb-2"><span class="mr-2 text-amber-600">▪</span><span><strong class="text-amber-700">주요 구간 부분 제어:</strong> 결제, 로그인 등 부하가 극심한 특정 구간에만 대기열을 적용하여 연쇄 장애를 차단하십시오.</span></li>
+                    <li class="flex items-start"><span class="mr-2 text-amber-600">▪</span><span><strong class="text-amber-700">UX(사용자 경험) 개선:</strong> 접속 지연 시 친절한 대기실(순번/시간) 안내를 통해 대국민 민원을 최소화해야 합니다.</span></li>
+                `;
+            } else {
+                // 17점 이하 [양호]
+                riskContainer.className = "rounded-lg p-4 mb-5 bg-emerald-50 border border-emerald-200 text-center transition-colors duration-300";
+                riskTitle.className = "text-lg font-bold text-emerald-700";
+                riskTitle.innerText = "✅ 양호 (Safe)";
+                riskDesc.innerText = "현재 인프라로 대응이 가능합니다. 단, 자원 최적화 및 보안을 위한 대비책 검토를 권장합니다.";
+                scoreDisplay.classList.add("text-emerald-600");
+                gaugeColor = '#059669'; // Emerald 600
+
+                list.innerHTML = `
+                    <li class="flex items-start mb-2"><span class="mr-2 text-emerald-600">▪</span><span><strong class="text-emerald-700">SaaS형 제어 (보험형):</strong> 필요 시에만 켜고 끌 수 있는 SaaS형 유량 제어를 통해 돌발 스파이크 트래픽에 대비하십시오.</span></li>
+                    <li class="flex items-start"><span class="mr-2 text-emerald-600">▪</span><span><strong class="text-emerald-700">행안부 컴플라이언스 준수:</strong> 대량 접속 통제 대책을 선제적으로 마련하여 향후 감사 및 책임 소재에 대비하는 것을 권장합니다.</span></li>
+                `;
+            }
+
+            // Update Gauge Chart (Min score is 10, Max is 30)
+            // To make the gauge visually appealing, we map 10-30 to a 0-20 scale for the chart
+            let visualScore = Math.max(0, projectedScore - 10);
+            let remainder = 20 - visualScore;
+            
+            gaugeChart.data.datasets[0].data = [visualScore, remainder];
+            gaugeChart.data.datasets[0].backgroundColor = [gaugeColor, '#f1f5f9'];
+            gaugeChart.update();
+        }
+
+        // Initialize
+        window.onload = () => {
+            renderChecklist();
+            initChart();
+        };
+    </script>
+</body>
+</html>
